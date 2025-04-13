@@ -1,20 +1,24 @@
 # web-to-markdown
   
 **Summary:**
-This Tampermonkey userscript (v1.0) converts the main content of a webpage into Markdown format. It features logic for selecting the relevant content area, aiming to reduce unwanted elements like navigation, footers, and ads for a cleaner output.
+This Tampermonkey userscript (v1.0) converts the main content of a webpage into Markdown format. It features logic for selecting the relevant content area, aiming to reduce unwanted elements like navigation, footers, and ads for a cleaner output.  
 
 **Code Overview:**
 
-*   **Metadata Block (`// ==UserScript==`):** Defines script name ("Webpage to Markdown"), version (1.0), description, dependencies (`turndown`, `turndown-plugin-gfm`), and necessary `GM_*` functions (`GM_registerMenuCommand`, `GM_download`).
+*   **Metadata Block (`// ==UserScript==`):** Defines script name ("Webpage to Markdown"), version (1.0), description, dependencies (`turndown`, `turndown-plugin-gfm`), and necessary `GM_*` functions (`GM_registerMenuCommand`, `GM_download`).  
 *   **Configuration (`turndownOptions`):** Sets options for the Turndown library to control Markdown output style.
 *   **`sanitizeFilename()`:** Helper function to create a valid filename from the page title.
 *   **`getPageContentNode()`:** Attempts to find the main content container using common selectors (e.g., `article`, `main`, `.post-content`). It clones the best candidate and removes common irrelevant elements before conversion. Falls back to `document.body` if necessary.  
 *   **`convertAndDownload()`:**
     *   Initializes the `TurndownService` with GFM plugin and a custom math rule.  
-    *   Calls `getPageContentNode()` to get the cleaned content node.
+    *   Calls `getPageContentNode()` to get the cleaned content node.  
     *   Converts the node's HTML to Markdown.
     *   Uses `GM_download` to prompt the user to save the resulting `.md` file.
-*   **Menu Command Registration:** Uses `GM_registerMenuCommand` to add an option ("Convert Page to Markdown (v1.0)") to the Tampermonkey menu.
+*   **Menu Command Registration:** Uses `GM_registerMenuCommand` to add an option ("Convert Page to Markdown (v1.0)") to the Tampermonkey menu.  
+    
+**Download:**  https://greasyfork.org/zh-CN/scripts/532670-webpage-to-markdown<br>  
+
+![image](https://github.com/user-attachments/assets/50300a48-a91d-4d24-a3f8-7f66ef076bf9)  
 
 **How to Use:**
 
