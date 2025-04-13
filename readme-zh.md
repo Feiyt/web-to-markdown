@@ -16,9 +16,8 @@
     *   调用 `GM_download` 提示用户保存生成的 `.md` 文件。
 *   **菜单命令注册:** 使用 `GM_registerMenuCommand` 在 Tampermonkey 菜单中添加一个执行脚本的选项（“Convert Page to Markdown (v1.0)”）。
 
-**下载**
-
-Download：  https://greasyfork.org/zh-CN/scripts/532670-webpage-to-markdown<br>
+**下载:**
+ https://greasyfork.org/zh-CN/scripts/532670-webpage-to-markdown<br>  
 
 ![image](https://github.com/user-attachments/assets/50300a48-a91d-4d24-a3f8-7f66ef076bf9)
 
