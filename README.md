@@ -1,5 +1,7 @@
-# web-to-markdown
-  
+# Web-to-Markdown    
+
+[简体中文](https://github.com/Feiyt/web-to-markdown/blob/main/readme-zh.md)
+
 **Summary:**
 This Tampermonkey userscript (v1.0) converts the main content of a webpage into Markdown format. It features logic for selecting the relevant content area, aiming to reduce unwanted elements like navigation, footers, and ads for a cleaner output.  
 
