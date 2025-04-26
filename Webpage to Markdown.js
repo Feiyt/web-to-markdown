@@ -71,6 +71,18 @@
             // Maybe add specific blog platform IDs? '.hentry'?
         ];
 
+        // 增强内容抓取能力
+        const enhancedSelectors = [
+            // 新增常见的内容选择器
+            '.content-area', '.post-article', '.blog-post', '.entry', '.single-post',
+            '.article-content', '.story-content', '.news-content',
+            // 针对特定平台的选择器
+            '.medium-article', '.notion-page-content', '.zhihu-content',
+            // 其他可能的内容容器
+            '.main-article', '.primary-content', '.main-body',
+        ];
+        selectors.push(...enhancedSelectors);
+
         console.log("Searching for best content container...");
         selectors.forEach((selector, index) => {
             try {
@@ -130,6 +142,19 @@
                 '.visually-hidden', '.sr-only', '[aria-hidden="true"]',
                 '.cookie-banner', '#related-articles', '.related_posts',
             ];
+
+            // 增强无效元素过滤规则
+            const enhancedExcludeSelectors = [
+                // 新增无效元素选择器
+                '.popup', '.modal', '.overlay', '.banner', '.promo', '.newsletter',
+                '.cookie-consent', '.tracking-consent', '.survey', '.feedback-form',
+                '.sponsored', '.promoted', '.related-links', '.external-links',
+                // 针对特定平台的无效元素
+                '.medium-footer', '.notion-sidebar', '.zhihu-ad',
+                // 其他可能的无效元素
+                '.hidden', '.invisible', '.offscreen',
+            ];
+            excludeSelectors.push(...enhancedExcludeSelectors);
 
             console.log("Removing excluded elements from clone...");
             let removedCount = 0;
