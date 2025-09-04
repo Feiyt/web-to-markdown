@@ -2,6 +2,7 @@
 
 [English](https://github.com/Feiyt/web-to-markdown/blob/main/README.md)
 
+
 **简介:**
 这是一个增强版 Tampermonkey 用户脚本 (v2.0)，具备智能页面类型检测和排版保持功能，能够智能地将网页内容转换为 Markdown 格式。它具有智能内容选择、平台特定优化，并保持原网页格式的一致性。
 
