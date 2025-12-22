@@ -1,149 +1,34 @@
-# Web-to-Markdown v2.0 🚀
-
-[简体中文](https://github.com/Feiyt/web-to-markdown/blob/main/readme-zh.md)
+# 网页转 Markdown (Webpage to Markdown) v2.0 🚀
 
 
-**Summary:**
-This enhanced Tampermonkey userscript (v2.0) intelligently converts webpage content into Markdown format with advanced page type detection and layout preservation. It features smart content selection, platform-specific optimization, and maintains the original webpage's formatting consistency.
+一个增强版 Tampermonkey 用户脚本，能够智能识别网页类型（如 GitHub、知乎、CSDN、微信文章等），并将其内容高质量转换为 Markdown 格式，同时保持原有的排版和格式。
 
-## ✨ Key Features
+## ✨ 核心功能
 
-### 🧠 Intelligent Page Type Detection
-- **Auto-detection**: Automatically identifies page types (GitHub, Zhihu, Juejin, CSDN, WeChat articles, technical docs, news, etc.)
-- **Dynamic Menu**: Menu options adapt based on detected page type (e.g., "Convert GitHub Repository to Markdown")
-- **Type-specific Processing**: Uses optimized selectors and cleaning rules for each platform
+*   **🧠 智能识别**: 自动检测页面类型，适配 GitHub、技术博客、新闻等多种场景。
+*   **🎯 精准提取**: 针对不同平台优化选择器，智能去除广告和无关内容。
+*   **🎨 排版保持**: 保留代码块、表格、图片、链接及文本格式（加粗、斜体等）。
+*   **📋 元信息**: 自动生成包含标题、URL、作者、发布时间等信息的头部元数据。
+*   **📁 智能命名**: 根据页面标题和类型自动生成规范的文件名。
 
-### 🎯 Enhanced Content Selection
-- **Priority-based Selectors**: Uses page-type-specific selectors for precise content extraction
-- **Smart Scoring System**: Evaluates content quality to select the best container
-- **Multi-level Fallback**: Automatically tries alternative selectors when primary ones fail
+## 🌐 支持平台
 
-### 📋 Rich Metadata Integration
-- **Auto-generated Headers**: Includes page title, URL, conversion date, author info
-- **Platform-specific Info**: Adds repository stars for GitHub, publish time for WeChat, etc.
-- **Structured Metadata**: Beautiful Markdown formatting for page information
+*   **代码托管**: GitHub (仓库、代码、Issues)
+*   **技术社区**: 知乎、掘金、CSDN、博客园
+*   **社交媒体**: 微信公众号文章
+*   **其他**: 新闻网站、技术文档、通用博客
 
-### 🎨 Layout Preservation
-- **Enhanced Turndown Rules**: Improved paragraph handling, line breaks, formatting elements
-- **Typography Support**: Strikethrough, underline, superscript, subscript, highlights
-- **HTML Element Preservation**: Maintains specific HTML tags when needed (kbd, small, etc.)
+## 📖 安装与使用
 
-### 🛠 Platform-specific Optimization
-- **GitHub**: Repository info, star counts, issue numbers, code file handling
-- **Zhihu**: Question titles, answer structure optimization
-- **Juejin/CSDN**: Article categories, technical tags
-- **WeChat**: Publisher info, article metadata
-- **Technical Docs**: Documentation structure, table of contents
+1.  安装 [Tampermonkey](https://www.tampermonkey.net/) 扩展。
+2.  [**点击此处安装脚本**](https://greasyfork.org/zh-CN/scripts/532670-webpage-to-markdown)。
+3.  访问任意网页，点击 Tampermonkey 图标，选择 **"转换 [页面类型] 为 Markdown"**。
 
-### 📁 Smart File Naming
-- **Type Prefixes**: Adds platform-specific prefixes (e.g., "GitHub_", "知乎_")
-- **Special Handling**: 
-  - GitHub code files: `GitHub_Code_filename.md`
-  - GitHub Issues: `GitHub_Issue_123_title.md`
-  - Repository READMEs: `GitHub_owner_repo_README.md`
+> **注意**: 如果无法下载 `.md` 文件，请在 Tampermonkey 设置 -> "下载 BETA" -> "文件扩展名白名单" 中添加 `md`。
 
-### 💫 Enhanced User Experience
-- **Beautiful Notifications**: Animated download success messages with page type info
-- **Better Error Handling**: Friendly error messages and solution suggestions
-- **Content Quality Checks**: Warns about short content or potential conversion issues
+## ⚠️ 免责声明
 
-## 🔧 Technical Implementation
-
-**Core Architecture:**
-
-*   **Metadata Block (`// ==UserScript==`):** Defines script name, version (2.0), description, dependencies (`turndown`, `turndown-plugin-gfm`), and necessary `GM_*` functions.
-*   **Page Type Detection (`detectPageType()`):** Analyzes URL, title, and meta description to identify platform and content type.
-*   **Smart Content Selection (`getContentSelectors()`):** Returns priority-ordered selectors based on detected page type.
-*   **Enhanced Content Node (`getPageContentNode()`):** 
-    *   Uses type-specific selectors for precise content extraction
-    *   Implements intelligent scoring system for content quality assessment
-    *   Applies multi-stage cleaning with platform-specific rules
-*   **Metadata Generation (`getPageMetadata()`):** Creates structured page information including platform-specific details.
-*   **Layout Preservation (`enhanceTurndownService()`):** Configures advanced Turndown rules for better formatting retention.
-*   **Post-processing (`postProcessMarkdown()`):** Optimizes final Markdown with format cleanup and consistency improvements.
-*   **Smart Download (`convertAndDownload()`):**
-    *   Generates type-appropriate filenames
-    *   Handles download failures gracefully with multiple fallback methods
-    *   Provides rich user feedback with notifications
-
-## 🌐 Supported Platforms
-
-| Platform | Icon | Special Features |
-|----------|------|------------------|
-| GitHub Repository | 📦 | Repository info, star counts, contributor details |
-| GitHub Code Files | 💻 | File path recognition, language detection |
-| GitHub Issues | 🐛 | Issue numbers, status tracking |
-| WeChat Articles | 💬 | Publish time, author information |
-| Zhihu Content | 🤔 | Question titles, answer structure |
-| Juejin Articles | 💎 | Article categories, technical tags |
-| CSDN Blogs | 🔧 | Blog categories, technical classifications |
-| Technical Docs | 📚 | Documentation structure, navigation |
-| News Articles | 📰 | Publication time, source information |
-| Blog Posts | 📝 | Author details, category information |
-| General Webpages | 🌐 | Basic information extraction |
-
-**Download:**  https://greasyfork.org/zh-CN/scripts/532670-webpage-to-markdown<br>  
-
-![image](https://github.com/user-attachments/assets/50300a48-a91d-4d24-a3f8-7f66ef076bf9)  
-
-## 📖 How to Use
-
-1.  Ensure you have the Tampermonkey (or compatible) browser extension installed.
-2.  Install this userscript (v2.0) from the download link above.
-3.  Navigate to any webpage you want to convert.
-4.  Click the Tampermonkey icon in your browser toolbar.
-5.  Select the dynamically generated option (e.g., "🔧 Convert CSDN Article to Markdown (v2.0 Enhanced)").
-6.  The script will automatically detect the page type and convert accordingly.
-7.  Your browser will download the Markdown file with an appropriate filename.
-
-## 🔧 Advanced Settings
-
-### Tampermonkey Download Configuration
-
-**If the `.md` file download fails:**
-1. Go to Tampermonkey Dashboard → Settings tab
-2. Change "Config mode" from "Beginner" to "Advanced"
-3. Scroll down to "Downloads BETA" section
-4. In "Whitelisted File Extensions" box, add `*.md` on a new line
-5. Click "Save" and refresh the page
-
-**Alternative: Use Built-in Fallback**
-- The script automatically falls back to browser download if Tampermonkey download fails
-- No configuration required - just click "OK" when prompted
-
-## 🆕 What's New in v2.0
-
-### Major Improvements
-- ✅ **Smart Page Detection**: Automatically identifies 11+ platform types
-- ✅ **Enhanced Content Extraction**: 80+ specialized selectors for different platforms
-- ✅ **Rich Metadata**: Auto-generated page information with platform-specific details
-- ✅ **Better Typography**: Support for advanced formatting (strikethrough, superscript, etc.)
-- ✅ **Intelligent File Naming**: Platform-aware filename generation
-- ✅ **Improved Error Handling**: Graceful fallbacks and user-friendly messages
-- ✅ **Quality Assurance**: Content validation and conversion quality metrics
-
-### Platform Support Expansion
-- 🔥 **GitHub**: Full support for repositories, code files, issues, and documentation
-- 🔥 **Chinese Platforms**: Optimized for Zhihu, Juejin, CSDN, WeChat articles
-- 🔥 **Technical Sites**: Enhanced support for documentation and tutorial sites
-- 🔥 **News & Blogs**: Better extraction for news articles and blog posts
-
-## ⚠️ Important Notes
-
-1.  **Content Accuracy**: This script provides intelligent content conversion but cannot guarantee 100% accuracy. Please review the converted content yourself.
-
-2.  **Copyright Compliance**: Do not use this script to download copyrighted or paid content without permission. The author assumes no responsibility for copyright violations. Please respect intellectual property rights.
-
-3.  **Platform Limitations**: While the script supports many platforms, some websites may have unique structures that require manual adjustment.
-
-4.  **Browser Compatibility**: Tested with Chrome, Firefox, and Edge. Requires Tampermonkey or compatible userscript manager.
-
-## 🔄 Version History
-
-- **v2.0** (Current): Intelligent page detection, enhanced platform support, rich metadata
-- **v2.0**: Improved content selection, better error handling, enhanced notifications  
-- **v1.0**: Basic webpage to Markdown conversion
+本脚本仅供学习交流，请勿用于侵犯版权。
 
 ---
-
-**Made with ❤️ for the developer community**
+**License**: MIT
