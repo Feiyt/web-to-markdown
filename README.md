@@ -1,34 +1,29 @@
-# 网页转 Markdown (Webpage to Markdown) v2.0 🚀
+# Webpage to Markdown v3.0
 
+🚀 **一键将任意网页转换为干净、格式规范的 Markdown。**
 
-一个增强版 Tampermonkey 用户脚本，能够智能识别网页类型（如 GitHub、知乎、CSDN、微信文章等），并将其内容高质量转换为 Markdown 格式，同时保持原有的排版和格式。
+这是一个浏览器用户脚本，能智能识别并提取网页正文，处理代码块与数学公式，生成可直接用于 Obsidian、Notion 或 Hugo 的 Markdown 文件。
 
-## ✨ 核心功能
+## 📦 安装
 
-*   **🧠 智能识别**: 自动检测页面类型，适配 GitHub、技术博客、新闻等多种场景。
-*   **🎯 精准提取**: 针对不同平台优化选择器，智能去除广告和无关内容。
-*   **🎨 排版保持**: 保留代码块、表格、图片、链接及文本格式（加粗、斜体等）。
-*   **📋 元信息**: 自动生成包含标题、URL、作者、发布时间等信息的头部元数据。
-*   **📁 智能命名**: 根据页面标题和类型自动生成规范的文件名。
+1. 安装油猴管理器：**Tampermonkey** (推荐) 或 Violentmonkey。
+2. 添加脚本：在管理器中新建脚本并粘贴 `Webpage to Markdown.js` 的内容。
 
-## 🌐 支持平台
+## 🛠️ 使用方法
 
-*   **代码托管**: GitHub (仓库、代码、Issues)
-*   **技术社区**: 知乎、掘金、CSDN、博客园
-*   **社交媒体**: 微信公众号文章
-*   **其他**: 新闻网站、技术文档、通用博客
+1. 打开任意文章或博客页面。
+2. 点击浏览器扩展栏的脚本管理器图标。
+3. 选择 **"🔄 Convert Page to Markdown"**。
+4. 文件将自动以 `标题_日期.md` 格式下载。
 
-## 📖 安装与使用
+## ⚙️ 配置 (Tampermonkey)
 
-1.  安装 [Tampermonkey](https://www.tampermonkey.net/) 扩展。
-2.  [**点击此处安装脚本**](https://greasyfork.org/zh-CN/scripts/532670-webpage-to-markdown)。
-3.  访问任意网页，点击 Tampermonkey 图标，选择 **"转换 [页面类型] 为 Markdown"**。
+为避免浏览器每次询问下载权限：
+1. 打开 Tampermonkey 管理面板 -> **设置**。
+2. 将 "配置模式" 改为 **高级**。
+3. 找到 **下载 BETA**，在 "白名单文件扩展名" 中添加 `.md` (或 `^.*\.md$`)。
+4. 保存设置。
 
-> **注意**: 如果无法下载 `.md` 文件，请在 Tampermonkey 设置 -> "下载 BETA" -> "文件扩展名白名单" 中添加 `md`。
+## 📄 License
 
-## ⚠️ 免责声明
-
-本脚本仅供学习交流，请勿用于侵犯版权。
-
----
-**License**: MIT
+MIT License © 2026 Feiyt
