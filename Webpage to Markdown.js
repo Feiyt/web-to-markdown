@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Webpage to Markdown
 // @namespace    http://tampermonkey.net/
-// @version      3.0
+// @version      3.0.1
 // @description  Advanced webpage to Markdown converter with intelligent content extraction, image handling, and code block formatting.
 // @author       Feiyt
 // @homepageURL  https://github.com/Feiyt
@@ -49,13 +49,68 @@
 
 
     // --- Helper Functions ---
-    function sanitizeFilename(name) { /* ... function from previous version ... */ } // Placeholder comment
-    // Sanitizes a string to be used as a filename.
-    sanitizeFilename = function(name) {
-        // Replace forbidden characters with underscore, collapse whitespace, trim, provide default.
-        return name.replace(/[\/\\:*?"<>|#%\n\r]/g, '_').replace(/\s+/g, ' ').trim() || "markdown_export";
-    };
+    const DEBUG_MODE = false;
 
+    function debugLog(...args) {
+        if (DEBUG_MODE) {
+            console.log(...args);
+        }
+    }
+
+    function sanitizeFilename(name) {
+        return String(name ?? '').replace(/[\\/:*?"<>|#%\n\r]/g, '_').replace(/\s+/g, ' ').trim() || 'markdown_export';
+    }
+
+    function toAbsoluteUrl(url, baseUrl = window.location.href) {
+        if (!url || typeof url !== 'string') return '';
+        if (url.startsWith('data:')) return url;
+        if (url.startsWith('//')) return window.location.protocol + url;
+        if (url.startsWith('/')) return new URL(url, window.location.origin).href;
+        if (/^[a-z]+:/i.test(url)) return url;
+
+        try {
+            return new URL(url, baseUrl).href;
+        } catch (error) {
+            return url;
+        }
+    }
+
+    function resolveImageSource(img) {
+        if (!img || !img.getAttribute) return '';
+
+        const candidateSources = [
+            img.getAttribute('data-src'),
+            img.getAttribute('data-original'),
+            img.getAttribute('data-origin'),
+            img.getAttribute('data-actualsrc'),
+            img.getAttribute('data-lazy-src'),
+            img.getAttribute('data-url'),
+            img.getAttribute('data-image'),
+            img.getAttribute('src'),
+            img.getAttribute('srcset')
+        ];
+
+        const firstValid = candidateSources.find(source => {
+            if (!source) return false;
+            const value = source.trim();
+            return value.length > 0 && !value.startsWith('data:');
+        });
+
+        if (!firstValid) {
+            return '';
+        }
+
+        if (firstValid.includes(',')) {
+            const parts = firstValid.split(',');
+            const lastPart = parts[parts.length - 1].trim();
+            const maybeUrl = lastPart.split(/\s+/)[0];
+            if (maybeUrl && maybeUrl.startsWith('http')) {
+                return toAbsoluteUrl(maybeUrl);
+            }
+        }
+
+        return toAbsoluteUrl(firstValid);
+    }
 
     /**
      * Improved content selection and cleaning.
@@ -241,10 +296,14 @@
                 elements.forEach(el => el.remove());
             });
 
-            // 移除空元素
+            // 移除空元素，但保留真实媒体元素（img / picture / video / svg 等）
             const allElements = clone.querySelectorAll('*');
             allElements.forEach(el => {
-                const hasMedia = el.querySelector('img, video, iframe, svg, canvas');
+                if (el.matches('img, video, iframe, svg, canvas, picture, figure')) {
+                    return;
+                }
+
+                const hasMedia = el.querySelector('img, video, iframe, svg, canvas, picture, figure');
                 if (!hasMedia && el.textContent.trim() === '') {
                     el.remove();
                 }
@@ -257,66 +316,14 @@
                    a.href = a.href; 
                 }
             });
-            // 处理图片的 src (全面增强版)
+            // 处理图片的 src（统一封装为 helper，减少重复逻辑）
             const images = clone.querySelectorAll('img');
             images.forEach(img => {
-                // 1. 搜集所有可能的懒加载属性
-                const dataset = img.dataset;
-                const potentialSrcs = [
-                    img.getAttribute('data-src'),
-                    img.getAttribute('data-original'),
-                    img.getAttribute('data-origin'),
-                    img.getAttribute('data-actualsrc'),
-                    img.getAttribute('data-lazy-src'),
-                    img.getAttribute('data-url'),
-                    img.getAttribute('data-image'),
-                    dataset.src,
-                    dataset.original,
-                    dataset.origin,
-                    dataset.actualsrc,
-                    dataset.lazySrc,
-                    dataset.url
-                ];
+                const realSrc = resolveImageSource(img);
+                if (!realSrc) return;
 
-                // 找到第一个有效的非空 value
-                let realSrc = potentialSrcs.find(s => s && s.trim().length > 0 && !s.startsWith('data:'));
-
-                // 2. 如果没有找到 data 属性，尝试解析 srcset
-                if (!realSrc && img.getAttribute('srcset')) {
-                    const srcset = img.getAttribute('srcset');
-                    // 简单的 Heuristic: 取逗号分隔的最后一部分（通常是最大图），然后取 URL 部分
-                    const sources = srcset.split(',');
-                    if (sources.length > 0) {
-                        const lastSource = sources[sources.length - 1].trim();
-                        // srcset 格式: "url 1x" 或 "url 200w"
-                        realSrc = lastSource.split(/\s+/)[0];
-                    }
-                }
-
-                // 3. 如果找到了更真实的路径，强制更新到 src 属性
-                if (realSrc) {
-                    img.src = realSrc;
-                    img.setAttribute('src', realSrc); // 确保 attribute 也更新，供 Turndown 读取
-                }
-
-                // 4. 绝对路径转换 (处理相对路径)
-                // clone 节点的 .src 属性getter通常会返回绝对路径，但为了保险，手动处理 attribute
-                let currentAttrSrc = img.getAttribute('src');
-                if (currentAttrSrc && !currentAttrSrc.startsWith('http') && !currentAttrSrc.startsWith('//') && !currentAttrSrc.startsWith('data:')) {
-                    try {
-                        const absoluteSrc = new URL(currentAttrSrc, window.location.href).href;
-                        img.src = absoluteSrc;
-                        img.setAttribute('src', absoluteSrc);
-                    } catch(e) {
-                         // ignore invalid urls
-                    }
-                }
-                
-                // 5. 再次检查，如果还是相对协议 //开头，补全协议
-                if (img.getAttribute('src') && img.getAttribute('src').startsWith('//')) {
-                     img.src = window.location.protocol + img.getAttribute('src');
-                     img.setAttribute('src', img.src);
-                }
+                img.src = realSrc;
+                img.setAttribute('src', realSrc);
             });
 
             // 额外处理：Picture 标签
@@ -519,21 +526,39 @@
                 filter: 'img',
                 replacement: function(content, node) {
                     const alt = node.getAttribute('alt') || '';
-                    const src = node.getAttribute('src') || node.getAttribute('data-src') || '';
-                    const title = node.getAttribute('title') ? ` "${node.getAttribute('title')}"` : '';
-                    
-                    if (!src) return alt ? `[${alt}]` : '';
-                    
-                    // 处理相对URL
-                    let fullSrc = src;
-                    if (src.startsWith('//')) {
-                        fullSrc = window.location.protocol + src;
-                    } else if (src.startsWith('/')) {
-                        fullSrc = window.location.origin + src;
-                    } else if (!src.startsWith('http')) {
-                        fullSrc = new URL(src, window.location.href).href;
+                    const candidateSources = [
+                        node.getAttribute('data-src'),
+                        node.getAttribute('data-original'),
+                        node.getAttribute('data-origin'),
+                        node.getAttribute('data-actualsrc'),
+                        node.getAttribute('data-lazy-src'),
+                        node.getAttribute('data-url'),
+                        node.getAttribute('data-image'),
+                        node.getAttribute('src'),
+                        node.getAttribute('srcset')
+                    ].filter(Boolean);
+
+                    let rawSrc = '';
+                    for (const source of candidateSources) {
+                        if (!source || source.trim().length === 0 || source.startsWith('data:')) continue;
+                        rawSrc = source.trim();
+                        if (source.includes(',')) {
+                            const parts = source.split(',');
+                            const lastPart = parts[parts.length - 1].trim();
+                            const maybeUrl = lastPart.split(/\s+/)[0];
+                            if (maybeUrl) {
+                                rawSrc = maybeUrl;
+                            }
+                        }
+                        break;
                     }
-                    
+
+                    const title = node.getAttribute('title') ? ` "${node.getAttribute('title')}"` : '';
+                    if (!rawSrc) return alt ? `[${alt}]` : '';
+
+                    const fullSrc = toAbsoluteUrl(rawSrc);
+                    if (!fullSrc) return alt ? `[${alt}]` : '';
+
                     return `![${alt}](${fullSrc}${title})`;
                 }
             });
@@ -743,8 +768,7 @@
 
             // --- Prepare Filename & Download ---
             const dateStr = new Date().toISOString().split('T')[0];
-            const sanitize = (name) => name.replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').trim();
-            const filename = `${sanitize(pageData.title)}_${dateStr}.md`;
+            const filename = `${sanitizeFilename(pageData.title)}_${dateStr}.md`;
             
             /**
              * 尝试使用GM_download下载，失败时回退到浏览器下载
@@ -807,59 +831,65 @@
              */
             function fallbackDownload(content, fileName) {
                 console.log("Using fallback download method...");
-                
+
                 try {
-                    // 方法2: 使用Blob和URL.createObjectURL
                     const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
                     const url = URL.createObjectURL(blob);
-                    
-                    // 创建临时下载链接
                     const downloadLink = document.createElement('a');
                     downloadLink.href = url;
                     downloadLink.download = fileName;
                     downloadLink.style.display = 'none';
-                    
-                    // 添加到DOM，触发下载，然后清理
+
                     document.body.appendChild(downloadLink);
                     downloadLink.click();
                     document.body.removeChild(downloadLink);
-                    
-                    // 清理对象URL
-                    setTimeout(() => {
-                        URL.revokeObjectURL(url);
-                    }, 100);
-                    
+
+                    setTimeout(() => URL.revokeObjectURL(url), 100);
                     console.log("Fallback download initiated successfully");
-                    
-                    // 显示美观的成功提示
+
                     const notification = document.createElement('div');
-                    notification.style.cssText = `
-                        position: fixed;
-                        top: 20px;
-                        right: 20px;
-                        background: linear-gradient(135deg, #4caf50, #45a049);
-                        color: white;
-                        padding: 16px 24px;
-                        border-radius: 8px;
-                        z-index: 10000;
-                        font-family: 'Segoe UI', Arial, sans-serif;
-                        font-size: 14px;
-                        box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3);
-                        border-left: 4px solid #2e7d32;
-                        min-width: 300px;
-                        animation: slideIn 0.3s ease-out;
-                    `;
-                    notification.innerHTML = `
-                        <div style="display: flex; align-items: center;">
-                            <div style="font-size: 20px; margin-right: 10px;">✅</div>
-                            <div>
-                                <div style="font-weight: bold; margin-bottom: 4px;">下载成功！</div>
-                                <div style="font-size: 12px; opacity: 0.9;">文件名: ${fileName}</div>
-                            </div>
-                        </div>
-                    `;
-                    
-                    // 添加CSS动画
+                    notification.style.position = 'fixed';
+                    notification.style.top = '20px';
+                    notification.style.right = '20px';
+                    notification.style.background = 'linear-gradient(135deg, #4caf50, #45a049)';
+                    notification.style.color = 'white';
+                    notification.style.padding = '16px 24px';
+                    notification.style.borderRadius = '8px';
+                    notification.style.zIndex = '10000';
+                    notification.style.fontFamily = 'Segoe UI, Arial, sans-serif';
+                    notification.style.fontSize = '14px';
+                    notification.style.boxShadow = '0 4px 12px rgba(76, 175, 80, 0.3)';
+                    notification.style.borderLeft = '4px solid #2e7d32';
+                    notification.style.minWidth = '300px';
+                    notification.style.animation = 'slideIn 0.3s ease-out';
+
+                    const icon = document.createElement('div');
+                    icon.textContent = '✅';
+                    icon.style.fontSize = '20px';
+                    icon.style.marginRight = '10px';
+                    icon.style.display = 'inline-block';
+
+                    const textWrap = document.createElement('div');
+                    textWrap.style.display = 'flex';
+                    textWrap.style.alignItems = 'center';
+
+                    const msgWrap = document.createElement('div');
+                    const title = document.createElement('div');
+                    title.textContent = '下载成功！';
+                    title.style.fontWeight = 'bold';
+                    title.style.marginBottom = '4px';
+
+                    const subtitle = document.createElement('div');
+                    subtitle.textContent = `文件名: ${fileName}`;
+                    subtitle.style.fontSize = '12px';
+                    subtitle.style.opacity = '0.9';
+
+                    msgWrap.appendChild(title);
+                    msgWrap.appendChild(subtitle);
+                    textWrap.appendChild(icon);
+                    textWrap.appendChild(msgWrap);
+                    notification.appendChild(textWrap);
+
                     if (!document.getElementById('download-notification-style')) {
                         const style = document.createElement('style');
                         style.id = 'download-notification-style';
@@ -875,139 +905,183 @@
                         `;
                         document.head.appendChild(style);
                     }
-                    
+
                     document.body.appendChild(notification);
-                    
-                    // 3秒后淡出
                     setTimeout(() => {
                         notification.style.animation = 'slideOut 0.3s ease-in';
-                        setTimeout(() => {
-                            if (notification.parentNode) {
-                                notification.parentNode.removeChild(notification);
-                            }
-                        }, 300);
+                        setTimeout(() => notification.remove(), 300);
                     }, 3000);
-                    
                 } catch (fallbackError) {
                     console.error("Fallback download also failed:", fallbackError);
-                    
-                    // 方法3: 最后的备用方案 - 显示内容让用户手动复制
-                    const modalContent = `
-                        <div style="
-                            position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
-                            background: rgba(0,0,0,0.85); z-index: 10000; 
-                            display: flex; align-items: center; justify-content: center;
-                            font-family: 'Segoe UI', Arial, sans-serif;
-                        ">
-                            <div style="
-                                background: white; padding: 30px; border-radius: 12px; 
-                                max-width: 85%; max-height: 85%; overflow: hidden;
-                                box-shadow: 0 20px 40px rgba(0,0,0,0.3);
-                                display: flex; flex-direction: column;
-                            ">
-                                <div style="margin-bottom: 20px;">
-                                    <h2 style="color: #333; margin: 0 0 10px 0; display: flex; align-items: center;">
-                                        <span style="font-size: 24px; margin-right: 10px;">📋</span>
-                                        手动保存 Markdown 文件
-                                    </h2>
-                                    <p style="color: #666; margin: 0; line-height: 1.5;">
-                                        自动下载失败，请复制以下内容并手动保存为 
-                                        <code style="background:#f0f0f0;padding:2px 6px;border-radius:3px;color:#e91e63;">${fileName}</code>
-                                    </p>
-                                </div>
-                                
-                                <div style="flex: 1; display: flex; flex-direction: column; min-height: 0;">
-                                    <textarea readonly style="
-                                        width: 100%; 
-                                        height: 400px; 
-                                        font-family: 'Consolas', 'Monaco', monospace; 
-                                        font-size: 13px; 
-                                        border: 2px solid #e0e0e0; 
-                                        border-radius: 6px;
-                                        padding: 15px;
-                                        resize: none;
-                                        outline: none;
-                                        background: #fafafa;
-                                        line-height: 1.4;
-                                        flex: 1;
-                                    " id="markdown-content">${content.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</textarea>
-                                </div>
-                                
-                                <div style="margin-top: 20px; text-align: center;">
-                                    <button onclick="
-                                        const textarea = document.getElementById('markdown-content');
-                                        textarea.select();
-                                        textarea.setSelectionRange(0, 99999);
-                                        
-                                        try {
-                                            const successful = document.execCommand('copy');
-                                            if (successful) {
-                                                this.innerHTML = '✅ 已复制到剪贴板！';
-                                                this.style.background = 'linear-gradient(135deg, #4caf50, #45a049)';
-                                                setTimeout(() => {
-                                                    this.innerHTML = '📋 复制内容';
-                                                    this.style.background = 'linear-gradient(135deg, #2196f3, #1976d2)';
-                                                }, 2000);
-                                            } else {
-                                                throw new Error('Copy command failed');
-                                            }
-                                        } catch (err) {
-                                            // 使用现代 Clipboard API
-                                            if (navigator.clipboard && navigator.clipboard.writeText) {
-                                                navigator.clipboard.writeText(textarea.value).then(() => {
-                                                    this.innerHTML = '✅ 已复制到剪贴板！';
-                                                    this.style.background = 'linear-gradient(135deg, #4caf50, #45a049)';
-                                                    setTimeout(() => {
-                                                        this.innerHTML = '📋 复制内容';
-                                                        this.style.background = 'linear-gradient(135deg, #2196f3, #1976d2)';
-                                                    }, 2000);
-                                                }).catch(() => {
-                                                    alert('复制失败，请手动选择文本内容进行复制');
-                                                });
-                                            } else {
-                                                alert('复制失败，请手动选择文本内容进行复制');
-                                            }
-                                        }
-                                    " style="
-                                        padding: 12px 24px; 
-                                        background: linear-gradient(135deg, #2196f3, #1976d2); 
-                                        color: white; 
-                                        border: none; 
-                                        border-radius: 6px; 
-                                        cursor: pointer;
-                                        font-size: 14px;
-                                        font-weight: 500;
-                                        margin-right: 10px;
-                                        transition: all 0.3s ease;
-                                    " onmouseover="this.style.transform='translateY(-1px)'" onmouseout="this.style.transform='translateY(0)'">
-                                        📋 复制内容
-                                    </button>
-                                    <button onclick="this.parentElement.parentElement.parentElement.remove()" 
-                                            style="
-                                                padding: 12px 24px; 
-                                                background: linear-gradient(135deg, #757575, #616161); 
-                                                color: white; 
-                                                border: none; 
-                                                border-radius: 6px; 
-                                                cursor: pointer;
-                                                font-size: 14px;
-                                                font-weight: 500;
-                                                transition: all 0.3s ease;
-                                            " onmouseover="this.style.transform='translateY(-1px)'" onmouseout="this.style.transform='translateY(0)'">
-                                        ❌ 关闭
-                                    </button>
-                                </div>
-                                
-                                <div style="margin-top: 15px; padding: 10px; background: #f5f5f5; border-radius: 6px; font-size: 12px; color: #666; text-align: center;">
-                                    💡 提示：复制后可以粘贴到任何文本编辑器中，然后保存为 .md 文件
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                    
-                    const modalDiv = document.createElement('div');
-                    modalDiv.innerHTML = modalContent;
-                    document.body.appendChild(modalDiv);
+
+                    const overlay = document.createElement('div');
+                    overlay.style.position = 'fixed';
+                    overlay.style.top = '0';
+                    overlay.style.left = '0';
+                    overlay.style.width = '100%';
+                    overlay.style.height = '100%';
+                    overlay.style.background = 'rgba(0,0,0,0.85)';
+                    overlay.style.zIndex = '10000';
+                    overlay.style.display = 'flex';
+                    overlay.style.alignItems = 'center';
+                    overlay.style.justifyContent = 'center';
+                    overlay.style.fontFamily = 'Segoe UI, Arial, sans-serif';
+
+                    const panel = document.createElement('div');
+                    panel.style.background = 'white';
+                    panel.style.padding = '30px';
+                    panel.style.borderRadius = '12px';
+                    panel.style.maxWidth = '85%';
+                    panel.style.maxHeight = '85%';
+                    panel.style.overflow = 'hidden';
+                    panel.style.boxShadow = '0 20px 40px rgba(0,0,0,0.3)';
+                    panel.style.display = 'flex';
+                    panel.style.flexDirection = 'column';
+
+                    const header = document.createElement('div');
+                    header.style.marginBottom = '20px';
+
+                    const heading = document.createElement('h2');
+                    heading.textContent = '手动保存 Markdown 文件';
+                    heading.style.color = '#333';
+                    heading.style.margin = '0 0 10px 0';
+                    heading.style.display = 'flex';
+                    heading.style.alignItems = 'center';
+
+                    const headingIcon = document.createElement('span');
+                    headingIcon.textContent = '📋';
+                    headingIcon.style.fontSize = '24px';
+                    headingIcon.style.marginRight = '10px';
+                    heading.appendChild(headingIcon);
+                    heading.appendChild(document.createTextNode('手动保存 Markdown 文件'));
+                    header.appendChild(heading);
+
+                    const hint = document.createElement('p');
+                    hint.textContent = '自动下载失败，请复制以下内容并手动保存为 ' + fileName;
+                    hint.style.color = '#666';
+                    hint.style.margin = '0';
+                    hint.style.lineHeight = '1.5';
+                    header.appendChild(hint);
+                    panel.appendChild(header);
+
+                    const textareaWrap = document.createElement('div');
+                    textareaWrap.style.flex = '1';
+                    textareaWrap.style.display = 'flex';
+                    textareaWrap.style.flexDirection = 'column';
+                    textareaWrap.style.minHeight = '0';
+
+                    const textarea = document.createElement('textarea');
+                    textarea.readOnly = true;
+                    textarea.value = content;
+                    textarea.style.width = '100%';
+                    textarea.style.height = '400px';
+                    textarea.style.fontFamily = 'Consolas, Monaco, monospace';
+                    textarea.style.fontSize = '13px';
+                    textarea.style.border = '2px solid #e0e0e0';
+                    textarea.style.borderRadius = '6px';
+                    textarea.style.padding = '15px';
+                    textarea.style.resize = 'none';
+                    textarea.style.outline = 'none';
+                    textarea.style.background = '#fafafa';
+                    textarea.style.lineHeight = '1.4';
+                    textarea.style.flex = '1';
+                    textareaWrap.appendChild(textarea);
+                    panel.appendChild(textareaWrap);
+
+                    const actionWrap = document.createElement('div');
+                    actionWrap.style.marginTop = '20px';
+                    actionWrap.style.textAlign = 'center';
+
+                    const copyBtn = document.createElement('button');
+                    copyBtn.type = 'button';
+                    copyBtn.textContent = '📋 复制内容';
+                    copyBtn.style.padding = '12px 24px';
+                    copyBtn.style.background = 'linear-gradient(135deg, #2196f3, #1976d2)';
+                    copyBtn.style.color = 'white';
+                    copyBtn.style.border = 'none';
+                    copyBtn.style.borderRadius = '6px';
+                    copyBtn.style.cursor = 'pointer';
+                    copyBtn.style.fontSize = '14px';
+                    copyBtn.style.fontWeight = '500';
+                    copyBtn.style.marginRight = '10px';
+                    copyBtn.style.transition = 'all 0.3s ease';
+                    copyBtn.addEventListener('mouseenter', () => {
+                        copyBtn.style.transform = 'translateY(-1px)';
+                    });
+                    copyBtn.addEventListener('mouseleave', () => {
+                        copyBtn.style.transform = 'translateY(0)';
+                    });
+                    copyBtn.addEventListener('click', async () => {
+                        textarea.select();
+                        textarea.setSelectionRange(0, textarea.value.length);
+                        try {
+                            const successful = document.execCommand('copy');
+                            if (successful) {
+                                copyBtn.textContent = '✅ 已复制到剪贴板！';
+                                copyBtn.style.background = 'linear-gradient(135deg, #4caf50, #45a049)';
+                                setTimeout(() => {
+                                    copyBtn.textContent = '📋 复制内容';
+                                    copyBtn.style.background = 'linear-gradient(135deg, #2196f3, #1976d2)';
+                                }, 2000);
+                                return;
+                            }
+                            throw new Error('Copy command failed');
+                        } catch (err) {
+                            try {
+                                if (navigator.clipboard && navigator.clipboard.writeText) {
+                                    await navigator.clipboard.writeText(textarea.value);
+                                    copyBtn.textContent = '✅ 已复制到剪贴板！';
+                                    copyBtn.style.background = 'linear-gradient(135deg, #4caf50, #45a049)';
+                                    setTimeout(() => {
+                                        copyBtn.textContent = '📋 复制内容';
+                                        copyBtn.style.background = 'linear-gradient(135deg, #2196f3, #1976d2)';
+                                    }, 2000);
+                                    return;
+                                }
+                            } catch (copyErr) {
+                                console.error('Clipboard copy failed:', copyErr);
+                            }
+                            alert('复制失败，请手动选择文本内容进行复制');
+                        }
+                    });
+
+                    const closeBtn = document.createElement('button');
+                    closeBtn.type = 'button';
+                    closeBtn.textContent = '❌ 关闭';
+                    closeBtn.style.padding = '12px 24px';
+                    closeBtn.style.background = 'linear-gradient(135deg, #757575, #616161)';
+                    closeBtn.style.color = 'white';
+                    closeBtn.style.border = 'none';
+                    closeBtn.style.borderRadius = '6px';
+                    closeBtn.style.cursor = 'pointer';
+                    closeBtn.style.fontSize = '14px';
+                    closeBtn.style.fontWeight = '500';
+                    closeBtn.style.transition = 'all 0.3s ease';
+                    closeBtn.addEventListener('mouseenter', () => {
+                        closeBtn.style.transform = 'translateY(-1px)';
+                    });
+                    closeBtn.addEventListener('mouseleave', () => {
+                        closeBtn.style.transform = 'translateY(0)';
+                    });
+                    closeBtn.addEventListener('click', () => overlay.remove());
+
+                    actionWrap.appendChild(copyBtn);
+                    actionWrap.appendChild(closeBtn);
+                    panel.appendChild(actionWrap);
+
+                    const tip = document.createElement('div');
+                    tip.textContent = '💡 提示：复制后可以粘贴到任何文本编辑器中，然后保存为 .md 文件';
+                    tip.style.marginTop = '15px';
+                    tip.style.padding = '10px';
+                    tip.style.background = '#f5f5f5';
+                    tip.style.borderRadius = '6px';
+                    tip.style.fontSize = '12px';
+                    tip.style.color = '#666';
+                    tip.style.textAlign = 'center';
+                    panel.appendChild(tip);
+
+                    overlay.appendChild(panel);
+                    document.body.appendChild(overlay);
                 }
             }
             
@@ -1028,123 +1102,175 @@
              
              // 合并的下载设置指南 - 移至主菜单级别
              GM_registerMenuCommand("📥 Download Settings Guide", function() {
-                 const unifiedHelpContent = `
-                     <div style="
-                         position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
-                         background: rgba(0,0,0,0.9); z-index: 10000; 
-                         display: flex; align-items: center; justify-content: center;
-                         font-family: 'Segoe UI', Arial, sans-serif;
-                     ">
-                         <div style="
-                             background: white; padding: 30px; border-radius: 12px; 
-                             max-width: 720px; max-height: 90%; overflow: auto;
-                             box-shadow: 0 20px 40px rgba(0,0,0,0.3);
-                         ">
-                             <h2 style="color: #333; margin-top: 0; text-align: center; display: flex; align-items: center; justify-content: center;">
-                                 <span style="font-size: 28px; margin-right: 10px;">📥</span>
-                                 下载设置完整指南
-                             </h2>
-                             
-                             <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 18px; border-radius: 10px; margin: 20px 0; text-align: center;">
-                                 <strong style="font-size: 16px;">🎯 目标：允许Tampermonkey下载.md文件</strong><br>
-                                 <div style="margin-top: 8px; font-size: 14px; opacity: 0.9;">
-                                     如果设置失败，脚本会自动使用浏览器下载，无需担心！
-                                 </div>
-                             </div>
-                             
-                             <h3 style="color: #555; border-bottom: 2px solid #e0e0e0; padding-bottom: 8px;">🔧 详细设置步骤</h3>
-                             <div style="background: #f8f9fa; padding: 25px; border-radius: 10px; line-height: 1.7; margin: 15px 0;">
-                                 <div style="margin-bottom: 20px;">
-                                     <strong style="color: #2e7d32; font-size: 15px;">1️⃣ 打开Tampermonkey管理界面</strong>
-                                     <ul style="margin: 8px 0; padding-left: 25px; color: #555;">
-                                         <li>点击浏览器工具栏的Tampermonkey图标 🐒</li>
-                                         <li>选择 "管理面板" 或 "Dashboard"</li>
-                                     </ul>
-                                 </div>
-                                 
-                                 <div style="margin-bottom: 20px;">
-                                     <strong style="color: #2e7d32; font-size: 15px;">2️⃣ 进入设置页面</strong>
-                                     <ul style="margin: 8px 0; padding-left: 25px; color: #555;">
-                                         <li>点击页面顶部的 "设置" 或 "Settings" 标签</li>
-                                         <li>向下滚动找到 "Advanced" 部分</li>
-                                     </ul>
-                                 </div>
-                                 
-                                 <div style="margin-bottom: 20px;">
-                                     <strong style="color: #2e7d32; font-size: 15px;">3️⃣ 配置下载白名单</strong>
-                                     <ul style="margin: 8px 0; padding-left: 25px; color: #555;">
-                                         <li>找到 "Downloads BETA" 选项</li>
-                                         <li>在 "Whitelist" 输入框中添加：</li>
-                                     </ul>
-                                     <div style="text-align: center; margin: 10px 0;">
-                                         <code style="background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 100%); color: #333; padding: 10px 20px; border-radius: 6px; font-size: 16px; font-weight: bold; display: inline-block;">*.md</code>
-                                     </div>
-                                 </div>
-                                 
-                                 <div>
-                                     <strong style="color: #2e7d32; font-size: 15px;">4️⃣ 保存设置</strong>
-                                     <ul style="margin: 8px 0; padding-left: 25px; color: #555;">
-                                         <li>滚动到页面底部点击 "Save" 按钮</li>
-                                         <li>刷新当前页面以使设置生效</li>
-                                     </ul>
-                                 </div>
-                             </div>
-                             
-                             <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; border-radius: 8px; margin: 20px 0;">
-                                 <strong style="color: #8a6d00;">💡 浏览器特殊说明</strong><br>
-                                 <div style="margin-top: 8px; color: #6c5500; line-height: 1.5;">
-                                     <strong>Edge浏览器用户：</strong> 如果无法直接访问设置，可以：<br>
-                                     • 右键点击Tampermonkey图标 → 选择 "扩展选项"<br>
-                                     • 或在地址栏输入：<code style="background: rgba(0,0,0,0.1); padding: 2px 6px; border-radius: 3px;">edge://extensions/</code>
-                                 </div>
-                             </div>
-                             
-                             <div style="background: #e8f5e8; border-left: 4px solid #4caf50; padding: 15px; border-radius: 8px; margin: 20px 0;">
-                                 <strong style="color: #2e7d32;">✅ 备用下载方案</strong><br>
-                                 <div style="margin-top: 8px; color: #2e7d32; line-height: 1.5;">
-                                     即使无法设置Tampermonkey权限，脚本也会自动使用浏览器原生下载功能，<br>
-                                     保证您能够成功获取转换后的Markdown文件！
-                                 </div>
-                             </div>
-                             
-                             <div style="background: #f3e5f5; border-left: 4px solid #9c27b0; padding: 15px; border-radius: 8px; margin: 20px 0;">
-                                 <strong style="color: #6a1b9a;">🔧 常见问题解答</strong><br>
-                                 <div style="margin-top: 8px; color: #6a1b9a; line-height: 1.5;">
-                                     <strong>Q:</strong> 下载被浏览器阻止？<br>
-                                     <strong>A:</strong> 检查浏览器弹窗拦截设置，允许当前网站的下载<br><br>
-                                     <strong>Q:</strong> 文件名显示乱码？<br>
-                                     <strong>A:</strong> 使用支持UTF-8编码的文本编辑器打开文件<br><br>
-                                     <strong>Q:</strong> 转换内容不完整？<br>
-                                     <strong>A:</strong> 刷新页面后重新尝试转换
-                                 </div>
-                             </div>
-                             
-                             <div style="text-align: center; margin-top: 30px;">
-                                 <button onclick="this.parentElement.parentElement.parentElement.remove()" 
-                                         style="
-                                             padding: 15px 35px; 
-                                             background: linear-gradient(135deg, #4caf50, #45a049); 
-                                             color: white; 
-                                             border: none; 
-                                             border-radius: 8px; 
-                                             cursor: pointer;
-                                             font-size: 16px;
-                                             font-weight: bold;
-                                             box-shadow: 0 4px 15px rgba(76, 175, 80, 0.3);
-                                             transition: all 0.3s ease;
-                                         "
-                                         onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 20px rgba(76, 175, 80, 0.4)'"
-                                         onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 15px rgba(76, 175, 80, 0.3)'">
-                                     ✓ 我已了解，关闭指南
-                                 </button>
-                             </div>
-                         </div>
-                     </div>
-                 `;
-                 
-                 const unifiedHelpDiv = document.createElement('div');
-                 unifiedHelpDiv.innerHTML = unifiedHelpContent;
-                 document.body.appendChild(unifiedHelpDiv);
+                 const overlay = document.createElement('div');
+                 overlay.style.position = 'fixed';
+                 overlay.style.top = '0';
+                 overlay.style.left = '0';
+                 overlay.style.width = '100%';
+                 overlay.style.height = '100%';
+                 overlay.style.background = 'rgba(0,0,0,0.9)';
+                 overlay.style.zIndex = '10000';
+                 overlay.style.display = 'flex';
+                 overlay.style.alignItems = 'center';
+                 overlay.style.justifyContent = 'center';
+                 overlay.style.fontFamily = 'Segoe UI, Arial, sans-serif';
+
+                 const panel = document.createElement('div');
+                 panel.style.background = 'white';
+                 panel.style.padding = '30px';
+                 panel.style.borderRadius = '12px';
+                 panel.style.maxWidth = '720px';
+                 panel.style.maxHeight = '90%';
+                 panel.style.overflow = 'auto';
+                 panel.style.boxShadow = '0 20px 40px rgba(0,0,0,0.3)';
+
+                 const title = document.createElement('h2');
+                 title.textContent = '下载设置完整指南';
+                 title.style.color = '#333';
+                 title.style.marginTop = '0';
+                 title.style.textAlign = 'center';
+                 title.style.display = 'flex';
+                 title.style.alignItems = 'center';
+                 title.style.justifyContent = 'center';
+
+                 const titleIcon = document.createElement('span');
+                 titleIcon.textContent = '📥';
+                 titleIcon.style.fontSize = '28px';
+                 titleIcon.style.marginRight = '10px';
+                 title.insertBefore(titleIcon, title.firstChild);
+                 panel.appendChild(title);
+
+                 const banner = document.createElement('div');
+                 banner.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+                 banner.style.color = 'white';
+                 banner.style.padding = '18px';
+                 banner.style.borderRadius = '10px';
+                 banner.style.margin = '20px 0';
+                 banner.style.textAlign = 'center';
+                 banner.innerHTML = '<strong style="font-size: 16px;">🎯 目标：允许Tampermonkey下载.md文件</strong><br><div style="margin-top: 8px; font-size: 14px; opacity: 0.9;">如果设置失败，脚本会自动使用浏览器下载，无需担心！</div>';
+                 panel.appendChild(banner);
+
+                 const steps = document.createElement('div');
+                 steps.style.background = '#f8f9fa';
+                 steps.style.padding = '25px';
+                 steps.style.borderRadius = '10px';
+                 steps.style.lineHeight = '1.7';
+                 steps.style.margin = '15px 0';
+
+                 const addStep = (titleText, items) => {
+                     const wrap = document.createElement('div');
+                     wrap.style.marginBottom = '20px';
+
+                     const heading = document.createElement('strong');
+                     heading.textContent = titleText;
+                     heading.style.color = '#2e7d32';
+                     heading.style.fontSize = '15px';
+                     wrap.appendChild(heading);
+
+                     const list = document.createElement('ul');
+                     list.style.margin = '8px 0';
+                     list.style.paddingLeft = '25px';
+                     list.style.color = '#555';
+                     items.forEach(item => {
+                         const li = document.createElement('li');
+                         li.textContent = item;
+                         list.appendChild(li);
+                     });
+                     wrap.appendChild(list);
+                     steps.appendChild(wrap);
+                 };
+
+                 addStep('1️⃣ 打开Tampermonkey管理界面', ['点击浏览器工具栏的Tampermonkey图标 🐒', '选择 "管理面板" 或 "Dashboard"']);
+                 addStep('2️⃣ 进入设置页面', ['点击页面顶部的 "设置" 或 "Settings" 标签', '向下滚动找到 "Advanced" 部分']);
+                 addStep('3️⃣ 配置下载白名单', ['找到 "Downloads BETA" 选项', '在 "Whitelist" 输入框中添加：']);
+
+                 const codeBlock = document.createElement('div');
+                 codeBlock.style.textAlign = 'center';
+                 codeBlock.style.margin = '10px 0';
+                 const code = document.createElement('code');
+                 code.textContent = '*.md';
+                 code.style.background = 'linear-gradient(135deg, #ff9a9e 0%, #fecfef 100%)';
+                 code.style.color = '#333';
+                 code.style.padding = '10px 20px';
+                 code.style.borderRadius = '6px';
+                 code.style.fontSize = '16px';
+                 code.style.fontWeight = 'bold';
+                 code.style.display = 'inline-block';
+                 codeBlock.appendChild(code);
+                 steps.appendChild(codeBlock);
+
+                 const saveStep = document.createElement('div');
+                 const saveHeading = document.createElement('strong');
+                 saveHeading.textContent = '4️⃣ 保存设置';
+                 saveHeading.style.color = '#2e7d32';
+                 saveHeading.style.fontSize = '15px';
+                 saveStep.appendChild(saveHeading);
+                 const saveList = document.createElement('ul');
+                 saveList.style.margin = '8px 0';
+                 saveList.style.paddingLeft = '25px';
+                 saveList.style.color = '#555';
+                 saveList.innerHTML = '<li>滚动到页面底部点击 "Save" 按钮</li><li>刷新当前页面以使设置生效</li>';
+                 saveStep.appendChild(saveList);
+                 steps.appendChild(saveStep);
+                 panel.appendChild(steps);
+
+                 const browserNote = document.createElement('div');
+                 browserNote.style.background = '#fff3cd';
+                 browserNote.style.borderLeft = '4px solid #ffc107';
+                 browserNote.style.padding = '15px';
+                 browserNote.style.borderRadius = '8px';
+                 browserNote.style.margin = '20px 0';
+                 browserNote.innerHTML = '<strong style="color: #8a6d00;">💡 浏览器特殊说明</strong><br><div style="margin-top: 8px; color: #6c5500; line-height: 1.5;"><strong>Edge浏览器用户：</strong> 如果无法直接访问设置，可以：<br>• 右键点击Tampermonkey图标 → 选择 "扩展选项"<br>• 或在地址栏输入：<code style="background: rgba(0,0,0,0.1); padding: 2px 6px; border-radius: 3px;">edge://extensions/</code></div>';
+                 panel.appendChild(browserNote);
+
+                 const backupNote = document.createElement('div');
+                 backupNote.style.background = '#e8f5e8';
+                 backupNote.style.borderLeft = '4px solid #4caf50';
+                 backupNote.style.padding = '15px';
+                 backupNote.style.borderRadius = '8px';
+                 backupNote.style.margin = '20px 0';
+                 backupNote.innerHTML = '<strong style="color: #2e7d32;">✅ 备用下载方案</strong><br><div style="margin-top: 8px; color: #2e7d32; line-height: 1.5;">即使无法设置Tampermonkey权限，脚本也会自动使用浏览器原生下载功能，<br>保证您能够成功获取转换后的Markdown文件！</div>';
+                 panel.appendChild(backupNote);
+
+                 const faq = document.createElement('div');
+                 faq.style.background = '#f3e5f5';
+                 faq.style.borderLeft = '4px solid #9c27b0';
+                 faq.style.padding = '15px';
+                 faq.style.borderRadius = '8px';
+                 faq.style.margin = '20px 0';
+                 faq.innerHTML = '<strong style="color: #6a1b9a;">🔧 常见问题解答</strong><br><div style="margin-top: 8px; color: #6a1b9a; line-height: 1.5;"><strong>Q:</strong> 下载被浏览器阻止？<br><strong>A:</strong> 检查浏览器弹窗拦截设置，允许当前网站的下载<br><br><strong>Q:</strong> 文件名显示乱码？<br><strong>A:</strong> 使用支持UTF-8编码的文本编辑器打开文件<br><br><strong>Q:</strong> 转换内容不完整？<br><strong>A:</strong> 刷新页面后重新尝试转换</div>';
+                 panel.appendChild(faq);
+
+                 const footer = document.createElement('div');
+                 footer.style.textAlign = 'center';
+                 footer.style.marginTop = '30px';
+
+                 const closeGuideBtn = document.createElement('button');
+                 closeGuideBtn.type = 'button';
+                 closeGuideBtn.textContent = '✓ 我已了解，关闭指南';
+                 closeGuideBtn.style.padding = '15px 35px';
+                 closeGuideBtn.style.background = 'linear-gradient(135deg, #4caf50, #45a049)';
+                 closeGuideBtn.style.color = 'white';
+                 closeGuideBtn.style.border = 'none';
+                 closeGuideBtn.style.borderRadius = '8px';
+                 closeGuideBtn.style.cursor = 'pointer';
+                 closeGuideBtn.style.fontSize = '16px';
+                 closeGuideBtn.style.fontWeight = 'bold';
+                 closeGuideBtn.style.boxShadow = '0 4px 15px rgba(76, 175, 80, 0.3)';
+                 closeGuideBtn.style.transition = 'all 0.3s ease';
+                 closeGuideBtn.addEventListener('mouseenter', () => {
+                     closeGuideBtn.style.transform = 'translateY(-2px)';
+                     closeGuideBtn.style.boxShadow = '0 6px 20px rgba(76, 175, 80, 0.4)';
+                 });
+                 closeGuideBtn.addEventListener('mouseleave', () => {
+                     closeGuideBtn.style.transform = 'translateY(0)';
+                     closeGuideBtn.style.boxShadow = '0 4px 15px rgba(76, 175, 80, 0.3)';
+                 });
+                 closeGuideBtn.addEventListener('click', () => overlay.remove());
+                 footer.appendChild(closeGuideBtn);
+                 panel.appendChild(footer);
+                 overlay.appendChild(panel);
+                 document.body.appendChild(overlay);
              }, "h");
              
              console.log("Menu commands registered.");
