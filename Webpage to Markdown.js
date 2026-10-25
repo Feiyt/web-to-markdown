@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         Webpage to Markdown
 // @namespace    http://tampermonkey.net/
-// @version      3.0.1
+// @version      3.0.2
 // @description  Advanced webpage to Markdown converter with intelligent content extraction, image handling, and code block formatting.
 // @author       Feiyt
 // @homepageURL  https://github.com/Feiyt
 // @license      MIT
 // @match        *://*/*
-// @require      https://unpkg.com/turndown/dist/turndown.js
+// @require      https://unpkg.com/turndown@7.2.0/dist/turndown.js
 // @require      https://unpkg.com/turndown-plugin-gfm@1.0.2/dist/turndown-plugin-gfm.js
 // @grant        GM_registerMenuCommand
 // @grant        GM_download
@@ -61,18 +61,49 @@
         return String(name ?? '').replace(/[\\/:*?"<>|#%\n\r]/g, '_').replace(/\s+/g, ' ').trim() || 'markdown_export';
     }
 
+    function escapeMarkdownText(value) {
+        return String(value ?? '').replace(/([\\`*_{}\[\]()#+\-.!|>])/g, '\\$1');
+    }
+
+    function escapeMarkdownUrl(value) {
+        return String(value ?? '').replace(/[\\\s"'<>()[\]]/g, character => `\\${character}`);
+    }
+
+    function escapeYamlString(value) {
+        return String(value ?? '')
+            .replace(/\\/g, '\\\\')
+            .replace(/"/g, '\\"')
+            .replace(/\r?\n/g, '\\n');
+    }
+
     function toAbsoluteUrl(url, baseUrl = window.location.href) {
         if (!url || typeof url !== 'string') return '';
+        url = url.trim();
         if (url.startsWith('data:')) return url;
-        if (url.startsWith('//')) return window.location.protocol + url;
-        if (url.startsWith('/')) return new URL(url, window.location.origin).href;
-        if (/^[a-z]+:/i.test(url)) return url;
 
         try {
             return new URL(url, baseUrl).href;
         } catch (error) {
-            return url;
+            debugLog('Unable to resolve URL:', url, error);
+            return '';
         }
+    }
+
+    function selectSrcsetCandidate(srcset) {
+        if (!srcset || typeof srcset !== 'string') return '';
+
+        const candidates = srcset.split(',').map(part => {
+            const pieces = part.trim().split(/\s+/);
+            const descriptor = pieces[1] || '';
+            const value = descriptor.endsWith('w')
+                ? Number.parseInt(descriptor, 10)
+                : descriptor.endsWith('x')
+                    ? Number.parseFloat(descriptor) * 1000
+                    : 0;
+            return { url: pieces[0], value: Number.isFinite(value) ? value : 0 };
+        }).filter(candidate => candidate.url && !candidate.url.startsWith('data:'));
+
+        return candidates.sort((left, right) => right.value - left.value)[0]?.url || '';
     }
 
     function resolveImageSource(img) {
@@ -100,16 +131,10 @@
             return '';
         }
 
-        if (firstValid.includes(',')) {
-            const parts = firstValid.split(',');
-            const lastPart = parts[parts.length - 1].trim();
-            const maybeUrl = lastPart.split(/\s+/)[0];
-            if (maybeUrl && maybeUrl.startsWith('http')) {
-                return toAbsoluteUrl(maybeUrl);
-            }
-        }
-
-        return toAbsoluteUrl(firstValid);
+        const source = firstValid.includes(',')
+            ? selectSrcsetCandidate(firstValid)
+            : firstValid;
+        return toAbsoluteUrl(source);
     }
 
     /**
@@ -118,7 +143,7 @@
      * @returns {object|null} Object containing { title: string, contentNode: Node } or null on failure.
      */
     function getPageContentNode() {
-        console.log("getPageContentNode: Starting content retrieval...");
+        debugLog("getPageContentNode: Starting content retrieval...");
         
         // 1. 获取页面标题
         let pageTitle = document.title;
@@ -171,16 +196,17 @@
             score += Math.min(Math.log(textLength) * 10, 100);
             
             // 子元素统计
-            const childCount = element.childElementCount;
-            const paragraphCount = element.querySelectorAll('p').length;
-            const linkCount = element.querySelectorAll('a').length;
-            const headingsCount = element.querySelectorAll('h1, h2, h3, h4, h5, h6').length;
+            const paragraphs = element.querySelectorAll('p');
+            const links = element.querySelectorAll('a');
+            const headings = element.querySelectorAll('h1, h2, h3, h4, h5, h6');
+            const paragraphCount = paragraphs.length;
+            const headingsCount = headings.length;
             
             score += paragraphCount * 3; // 段落多通常是正文
             score += headingsCount * 5; // 有标题结构加分
             
             // 链接密度惩罚
-            const linkTextLength = Array.from(element.querySelectorAll('a')).reduce((acc, a) => acc + a.textContent.length, 0);
+            const linkTextLength = Array.from(links).reduce((acc, a) => acc + a.textContent.length, 0);
             const linkDensity = linkTextLength / Math.max(textLength, 1);
             
             if (linkDensity > 0.5) score -= 50; // 链接内容占比过高可能是导航
@@ -233,11 +259,11 @@
              bestCandidate = document.body;
         }
         
-        console.log(`Selected final container: <${bestCandidate.tagName.toLowerCase()} class="${bestCandidate.className}" id="${bestCandidate.id}"> with score ${maxScore}`);
+        debugLog(`Selected final container: <${bestCandidate.tagName.toLowerCase()} class="${bestCandidate.className}" id="${bestCandidate.id}"> with score ${maxScore}`);
 
         // --- Clone and Clean ---
         try {
-            console.log("Cloning selected container...");
+            debugLog("Cloning selected container...");
             const clone = bestCandidate.cloneNode(true);
 
             // Define selectors for elements to exclude from the conversion.
@@ -269,7 +295,7 @@
                 '.newsletter-popup', '.subscription-modal', '.survey', '.feedback-form',
                 
                 // 技术元素
-                'script', 'style', 'noscript', 'template', 'link[rel="stylesheet"]', 'meta', 
+                'script:not([type^="math/tex"])', 'style', 'noscript', 'template', 'link[rel="stylesheet"]', 'meta', 
                 'input[type="hidden"]', '.visually-hidden', '.sr-only', '[aria-hidden="true"]',
                 '.hidden', '.invisible', '.offscreen', 'iframe[src*="ads"]', 'iframe[src*="tracking"]',
                 
@@ -290,30 +316,40 @@
                 '.csdn-side-toolbar', '.tool-box', '.reward-user', '.p-ext'
             ];
 
-            // 批量移除干扰元素
-            excludeSelectors.forEach(selector => {
-                const elements = clone.querySelectorAll(selector);
-                elements.forEach(el => el.remove());
-            });
+            // 一次查询移除干扰元素，避免对每个选择器重复遍历 DOM。
+            clone.querySelectorAll(excludeSelectors.join(',')).forEach(el => el.remove());
 
-            // 移除空元素，但保留真实媒体元素（img / picture / video / svg 等）
+            // 移除空元素。先标记媒体祖先，避免每个节点重复查询后代媒体。
             const allElements = clone.querySelectorAll('*');
+            const mediaAncestors = new Set();
+            clone.querySelectorAll('img, video, iframe, svg, canvas, picture, figure').forEach(media => {
+                let ancestor = media.parentElement;
+                while (ancestor && ancestor !== clone) {
+                    mediaAncestors.add(ancestor);
+                    ancestor = ancestor.parentElement;
+                }
+            });
             allElements.forEach(el => {
                 if (el.matches('img, video, iframe, svg, canvas, picture, figure')) {
                     return;
                 }
 
-                const hasMedia = el.querySelector('img, video, iframe, svg, canvas, picture, figure');
-                if (!hasMedia && el.textContent.trim() === '') {
+                if (!mediaAncestors.has(el) && el.textContent.trim() === '') {
                     el.remove();
                 }
             });
 
-            // 将相对链接转为绝对链接 (处理 clone 中的 a 标签)
+            // 规范化链接并移除 javascript 链接。
             const links = clone.querySelectorAll('a');
             links.forEach(a => {
-                if(a.href && !a.href.startsWith('javascript:') && !a.href.startsWith('#')) {
-                   a.href = a.href; 
+                const href = a.getAttribute('href') || '';
+                if (href.trim().toLowerCase().startsWith('javascript:')) {
+                    a.replaceWith(...Array.from(a.childNodes));
+                    return;
+                }
+                if (href && !href.startsWith('#')) {
+                    const absoluteHref = toAbsoluteUrl(href);
+                    if (absoluteHref) a.setAttribute('href', absoluteHref);
                 }
             });
             // 处理图片的 src（统一封装为 helper，减少重复逻辑）
@@ -333,12 +369,10 @@
                 const img = pic.querySelector('img');
                 const source = pic.querySelector('source');
                 if (img && source && source.srcset) {
-                     // 同样取 srcset 的最佳候选
-                     const sources = source.srcset.split(',');
-                     const lastSource = sources[sources.length - 1].trim().split(/\s+/)[0];
-                     if (lastSource) {
-                         img.src = lastSource;
-                         img.setAttribute('src', lastSource);
+                     const selectedSource = toAbsoluteUrl(selectSrcsetCandidate(source.srcset));
+                     if (selectedSource) {
+                         img.src = selectedSource;
+                         img.setAttribute('src', selectedSource);
                      }
                 }
             });
@@ -368,7 +402,10 @@
                 // 1. 明确的分割线后跟"推荐"字样
                 if (child.tagName === 'HR') {
                     const next = child.nextElementSibling;
-                    if (next && endMarkers.some(m => next.textContent.includes(m))) {
+                    const nextIsHeading = next && (/^h[1-6]$/i.test(next.tagName) ||
+                        next.classList.contains('title') || next.classList.contains('header'));
+                    if (nextIsHeading && next.textContent.trim().length < 40 &&
+                        endMarkers.some(m => next.textContent.includes(m))) {
                         child.remove(); // 移除HR
                         cutoffFound = true; // 标记后续全部移除
                         continue;
@@ -405,37 +442,45 @@
      * @returns {string} 优化后的markdown内容
      */
     function postProcessMarkdown(markdown) {
-        console.log("Post-processing Markdown content...");
+        debugLog("Post-processing Markdown content...");
         
         if (!markdown || typeof markdown !== 'string') {
             console.warn("Invalid markdown content for post-processing");
             return markdown || '';
         }
         
-        let processed = markdown;
+        const processText = text => {
+            let processedText = text;
         
-        // 1. 清理多余的空行（超过2个连续空行压缩为2个）
-        processed = processed.replace(/\n\s*\n\s*\n/g, '\n\n');
+            // 1. 清理多余的空行（超过2个连续空行压缩为2个）
+            processedText = processedText.replace(/\n\s*\n\s*\n/g, '\n\n');
         
-        // 2. 修复列表格式
-        processed = processed.replace(/\n(\s*[\*\-\+])/g, '\n\n$1');
-        processed = processed.replace(/(\n\s*[\*\-\+].*)\n([^\n\s\*\-\+])/g, '$1\n\n$2');
+            // 2. 修复列表格式
+            processedText = processedText.replace(/\n(\s*[\*\-\+])/g, '\n\n$1');
+            processedText = processedText.replace(/(\n\s*[\*\-\+].*)\n([^\n\s\*\-\+])/g, '$1\n\n$2');
         
-        // 3. 修复标题前后的空行
-        processed = processed.replace(/([^\n])\n(#{1,6}\s)/g, '$1\n\n$2');
-        processed = processed.replace(/(#{1,6}.*)\n([^\n#\s])/g, '$1\n\n$2');
+            // 3. 修复标题前后的空行
+            processedText = processedText.replace(/([^\n])\n(#{1,6}\s)/g, '$1\n\n$2');
+            processedText = processedText.replace(/(#{1,6}.*)\n([^\n#\s])/g, '$1\n\n$2');
         
-        // 4. 清理链接中的多余空格
-        processed = processed.replace(/\[\s+([^\]]*?)\s+\]/g, '[$1]');
-        processed = processed.replace(/\(\s+([^\)]*?)\s+\)/g, '($1)');
+            // 4. 清理链接中的多余空格
+            processedText = processedText.replace(/\[\s+([^\]]*?)\s+\]/g, '[$1]');
+            processedText = processedText.replace(/\(\s+([^\)]*?)\s+\)/g, '($1)');
         
-        // 5. 修复代码块格式
-        processed = processed.replace(/([^\n])\n```/g, '$1\n\n```');
-        processed = processed.replace(/```\n([^\n])/g, '```\n\n$1');
+            // 5. 修复代码块格式
+            processedText = processedText.replace(/([^\n])\n```/g, '$1\n\n```');
+            processedText = processedText.replace(/```\n([^\n])/g, '```\n\n$1');
         
-        // 6. 清理引用块格式
-        processed = processed.replace(/([^\n])\n>/g, '$1\n\n>');
-        processed = processed.replace(/>\s*\n\n>/g, '>\n>');
+            // 6. 清理引用块格式
+            processedText = processedText.replace(/([^\n])\n>/g, '$1\n\n>');
+            processedText = processedText.replace(/>\s*\n\n>/g, '>\n>');
+            return processedText;
+        };
+
+        // 只处理普通文本，保护 fenced code block 内的源码。
+        let processed = markdown.split(/(```[\s\S]*?```)/g)
+            .map((part, index) => index % 2 === 1 ? part : processText(part))
+            .join('');
         
         // 7. (已移除) 移除孤立的HTML标签残留 
         // 这一步过于激进，会破坏 <details> 折叠块和未被 Turndown 转换的合法 HTML 元素
@@ -449,7 +494,7 @@
             processed += '\n';
         }
         
-        console.log("Markdown post-processing completed");
+        debugLog("Markdown post-processing completed");
         return processed;
     }
 
@@ -478,6 +523,7 @@
                      return (
                          (node.nodeName === 'SPAN' && (node.classList.contains('katex') || node.classList.contains('MathJax_Preview'))) ||
                          (node.nodeName === 'DIV' && node.classList.contains('katex-display')) ||
+                         (node.nodeName === 'MATH' && node.hasAttribute('alttext')) ||
                          (node.nodeName === 'SCRIPT' && node.getAttribute('type')?.startsWith('math/tex')) ||
                          (node.getAttribute('role') === 'math')
                      );
@@ -542,24 +588,19 @@
                     for (const source of candidateSources) {
                         if (!source || source.trim().length === 0 || source.startsWith('data:')) continue;
                         rawSrc = source.trim();
-                        if (source.includes(',')) {
-                            const parts = source.split(',');
-                            const lastPart = parts[parts.length - 1].trim();
-                            const maybeUrl = lastPart.split(/\s+/)[0];
-                            if (maybeUrl) {
-                                rawSrc = maybeUrl;
-                            }
-                        }
+                        if (source.includes(',')) rawSrc = selectSrcsetCandidate(source);
                         break;
                     }
 
-                    const title = node.getAttribute('title') ? ` "${node.getAttribute('title')}"` : '';
-                    if (!rawSrc) return alt ? `[${alt}]` : '';
+                    const title = node.getAttribute('title')
+                        ? ` "${node.getAttribute('title').replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+                        : '';
+                    if (!rawSrc)                     return alt ? `[${escapeMarkdownText(alt)}]` : '';
 
                     const fullSrc = toAbsoluteUrl(rawSrc);
-                    if (!fullSrc) return alt ? `[${alt}]` : '';
+                    if (!fullSrc) return alt ? `[${escapeMarkdownText(alt)}]` : '';
 
-                    return `![${alt}](${fullSrc}${title})`;
+                    return `![${escapeMarkdownText(alt)}](${escapeMarkdownUrl(fullSrc)}${title})`;
                 }
             });
 
@@ -571,13 +612,13 @@
                     let language = '';
                     const codeLabel = node.querySelector('code');
                     if (codeLabel) {
-                        language = (codeLabel.className.match(/language-(\w+)/) || 
-                                  codeLabel.className.match(/lang-(\w+)/) ||
+                        language = (codeLabel.className.match(/language-([^\s]+)/) || 
+                                  codeLabel.className.match(/lang-([^\s]+)/) ||
                                   [])[1] || '';
                     }
                     if (!language) {
-                         language = (node.className.match(/language-(\w+)/) || 
-                                   node.className.match(/lang-(\w+)/) ||
+                         language = (node.className.match(/language-([^\s]+)/) || 
+                                   node.className.match(/lang-([^\s]+)/) ||
                                    [])[1] || '';
                     }
 
@@ -607,7 +648,7 @@
                     // 对于 <pre><code>...</code></pre> 结构，textContent 通常包含源码换行
                     let codeText = codeEl.textContent || '';
                     
-                    return '\n\n```' + language + '\n' + codeText.trim() + '\n```\n\n';
+                    return '\n\n```' + language + '\n' + codeText.replace(/^\n|\n$/g, '') + '\n```\n\n';
                 }
             });
 
@@ -620,7 +661,11 @@
                     // 尝试提取 summary 之后的内容
                     // 简单清洗：移除 content 中可能包含的 summary 文本重复（TURNDOWN 可能会把 summary 转成 markdown 放在 content 开头）
                     // 更好的方式是保留 HTML 结构，兼容性好
-                    return '\n\n<details>\n<summary>' + summaryText + '</summary>\n\n' + content.replace(summaryText, '').trim() + '\n\n</details>\n\n';
+                    const summaryMarkdown = summary ? turndownService.turndown(summary).trim() : '';
+                    const body = summaryMarkdown && content.trim().startsWith(summaryMarkdown)
+                        ? content.trim().slice(summaryMarkdown.length).trim()
+                        : content.trim();
+                    return '\n\n<details>\n<summary>' + escapeMarkdownText(summaryText) + '</summary>\n\n' + body + '\n\n</details>\n\n';
                 }
             });
 
@@ -632,14 +677,15 @@
                     if (rows.length === 0) return content;
                     
                     let markdown = '\n\n';
-                    let hasHeader = false;
+                    const headerIndex = rows.findIndex(row => row.querySelector('th')) >= 0
+                        ? rows.findIndex(row => row.querySelector('th'))
+                        : 0;
                     
                     rows.forEach((row, index) => {
                         const cells = Array.from(row.querySelectorAll('td, th'));
                         if (cells.length === 0) return;
                         
-                        const isHeader = row.querySelector('th') || (index === 0 && !hasHeader);
-                        if (isHeader) hasHeader = true;
+                        const isHeader = index === headerIndex;
                         
                         const cellContents = cells.map(cell => {
                             return cell.textContent.trim().replace(/\|/g, '\\|').replace(/\n/g, ' ');
@@ -663,8 +709,10 @@
                 replacement: function(content, node) {
                     const cite = node.querySelector('cite');
                     const attribution = cite ? `\n\n— ${cite.textContent.trim()}` : '';
+                    const citeText = cite ? cite.textContent.trim() : '';
+                    const body = citeText ? content.replace(citeText, '').trim() : content.trim();
                     
-                    return '\n\n> ' + content.trim().replace(/\n/g, '\n> ') + attribution + '\n\n';
+                    return '\n\n> ' + body.replace(/\n/g, '\n> ') + attribution + '\n\n';
                 }
             });
 
@@ -673,29 +721,29 @@
                 filter: ['video', 'iframe'],
                 replacement: function(content, node) {
                     if (node.tagName === 'VIDEO') {
-                        const src = node.getAttribute('src') || node.querySelector('source')?.getAttribute('src') || '';
-                        const poster = node.getAttribute('poster') || '';
+                        const src = toAbsoluteUrl(node.getAttribute('src') || node.querySelector('source')?.getAttribute('src') || '');
+                        const poster = toAbsoluteUrl(node.getAttribute('poster') || '');
                         const alt = node.getAttribute('alt') || 'Video';
                         
                         if (poster) {
-                            return `[![${alt}](${poster})](${src})`;
+                            return `[![${escapeMarkdownText(alt)}](${escapeMarkdownUrl(poster)})](${escapeMarkdownUrl(src)})`;
                         }
-                        return `[${alt}](${src})`;
+                        return `[${escapeMarkdownText(alt)}](${escapeMarkdownUrl(src)})`;
                     }
                     
                     if (node.tagName === 'IFRAME') {
-                        const src = node.getAttribute('src') || '';
+                        const src = toAbsoluteUrl(node.getAttribute('src') || '');
                         const title = node.getAttribute('title') || 'Embedded content';
                         
                         // 检测YouTube等视频平台
                         if (src.includes('youtube.com') || src.includes('youtu.be')) {
                             const videoId = src.match(/(?:youtube\.com\/embed\/|youtu\.be\/)([^?&]+)/)?.[1];
                             if (videoId) {
-                                return `\n\n[![YouTube Video](https://img.youtube.com/vi/${videoId}/0.jpg)](${src})\n\n`;
+                                return `\n\n[![YouTube Video](https://img.youtube.com/vi/${videoId}/0.jpg)](${escapeMarkdownUrl(src)})\n\n`;
                             }
                         }
                         
-                        return `\n\n[${title}](${src})\n\n`;
+                        return `\n\n[${escapeMarkdownText(title)}](${escapeMarkdownUrl(src)})\n\n`;
                     }
                     
                     return content;
@@ -703,7 +751,7 @@
             });
 
             // --- Perform Conversion ---
-            console.log("Getting page content node...");
+            debugLog("Getting page content node...");
             const pageData = getPageContentNode();
 
             if (!pageData || !pageData.contentNode) {
@@ -711,12 +759,12 @@
                  alert("Could not get a valid page content node for conversion.");
                  return;
             }
-            console.log(`Content node retrieved. Title: ${pageData.title}. Starting conversion...`);
+            debugLog(`Content node retrieved. Title: ${pageData.title}. Starting conversion...`);
 
             let markdownContent = '';
             try {
                 markdownContent = turndownService.turndown(pageData.contentNode);
-                console.log("Markdown conversion complete. Applying post-processing...");
+                debugLog("Markdown conversion complete. Applying post-processing...");
                 
                 // 应用后处理优化
                 markdownContent = postProcessMarkdown(markdownContent);
@@ -725,20 +773,20 @@
                 const now = new Date();
                 const frontMatter = [
                     '---',
-                    `title: "${pageData.title.replace(/"/g, '\\"')}"`,
-                    `url: ${window.location.href}`,
-                    `date: ${now.toLocaleString()}`,
-                    `author: ${window.location.hostname}`,
+                    `title: "${escapeYamlString(pageData.title)}"`,
+                    `url: "${escapeYamlString(window.location.href)}"`,
+                    `date: "${now.toISOString()}"`,
+                    `author: "${escapeYamlString(window.location.hostname)}"`,
                     '---',
                     '',
-                    `# ${pageData.title}`,
+                    `# ${escapeMarkdownText(pageData.title.replace(/\r?\n/g, ' ').trim())}`,
                     '',
                     ''
                 ].join('\n');
                 
                 markdownContent = frontMatter + markdownContent;
                 
-                console.log("Final markdown processing completed.");
+                debugLog("Final markdown processing completed.");
             } catch (convertError) {
                  console.error("Error during Turndown conversion:", convertError.message, convertError.stack);
                  alert(`Error during Markdown conversion: ${convertError.message}`);
@@ -750,7 +798,7 @@
             const lineCount = markdownContent.split('\n').length;
             const wordCount = markdownContent.split(/\s+/).length;
             
-            console.log(`Conversion quality metrics: ${finalLength} chars, ${lineCount} lines, ~${wordCount} words`);
+            debugLog(`Conversion quality metrics: ${finalLength} chars, ${lineCount} lines, ~${wordCount} words`);
 
             if (!markdownContent || markdownContent.trim() === '') {
                  console.warn("Conversion resulted in empty Markdown content.");
@@ -774,23 +822,34 @@
              * 尝试使用GM_download下载，失败时回退到浏览器下载
              */
             function downloadMarkdown(content, fileName) {
-                console.log(`Attempting to download ${fileName}...`);
+                debugLog(`Attempting to download ${fileName}...`);
                 
                 // 方法1: 尝试使用GM_download (Tampermonkey原生方法)
                 if (typeof GM_download === 'function') {
-                    const dataUri = `data:text/markdown;charset=utf-8,${encodeURIComponent(content)}`;
+                    const blobUrl = URL.createObjectURL(new Blob([content], { type: 'text/markdown;charset=utf-8' }));
+                    let released = false;
+                    const releaseBlobUrl = () => {
+                        if (!released) {
+                            released = true;
+                            URL.revokeObjectURL(blobUrl);
+                        }
+                    };
                     
-                    GM_download({
-                        url: dataUri,
-                        name: fileName,
-                        saveAs: true,
-                        onload: () => {
-                            console.log("Download completed successfully via GM_download");
-                        },
-                        onerror: (err) => {
-                            console.warn('GM_download failed:', err);
+                    try {
+                        GM_download({
+                            url: blobUrl,
+                            name: fileName,
+                            saveAs: true,
+                            onload: () => {
+                                releaseBlobUrl();
+                                debugLog("Download completed successfully via GM_download");
+                            },
+                            onerror: (err) => {
+                                releaseBlobUrl();
+                                console.warn('GM_download failed:', err);
+                                const errorCode = err?.error || 'unknown';
                             
-                            if (err.error === 'not_whitelisted') {
+                                if (errorCode === 'not_whitelisted') {
                                 console.log("File extension not whitelisted. Attempting fallback download method...");
                                 // 显示友好的提示信息
                                 const userChoice = confirm(
@@ -812,14 +871,19 @@
                                         alert("请在Tampermonkey菜单中点击 '📥 Download Settings Guide' 查看详细设置说明");
                                     }, 100);
                                 }
-                            } else {
-                                console.error("GM_download error:", err.error || 'Unknown error');
-                                // 其他错误也使用备用下载
-                                console.log("Using fallback download due to GM_download error");
-                                fallbackDownload(content, fileName);
+                                } else {
+                                    console.error("GM_download error:", errorCode);
+                                    // 其他错误也使用备用下载
+                                    debugLog("Using fallback download due to GM_download error");
+                                    fallbackDownload(content, fileName);
+                                }
                             }
-                        }
-                    });
+                        });
+                    } catch (downloadError) {
+                        releaseBlobUrl();
+                        console.error("GM_download could not be started:", downloadError);
+                        fallbackDownload(content, fileName);
+                    }
                 } else {
                     console.warn("GM_download not available, using fallback method");
                     fallbackDownload(content, fileName);
@@ -844,7 +908,7 @@
                     downloadLink.click();
                     document.body.removeChild(downloadLink);
 
-                    setTimeout(() => URL.revokeObjectURL(url), 100);
+                    setTimeout(() => URL.revokeObjectURL(url), 1000);
                     console.log("Fallback download initiated successfully");
 
                     const notification = document.createElement('div');
@@ -1102,7 +1166,13 @@
              
              // 合并的下载设置指南 - 移至主菜单级别
              GM_registerMenuCommand("📥 Download Settings Guide", function() {
-                 const overlay = document.createElement('div');
+             const existingOverlay = document.getElementById('web-to-markdown-settings-overlay');
+             if (existingOverlay) {
+                 existingOverlay.remove();
+                 return;
+             }
+             const overlay = document.createElement('div');
+             overlay.id = 'web-to-markdown-settings-overlay';
                  overlay.style.position = 'fixed';
                  overlay.style.top = '0';
                  overlay.style.left = '0';
@@ -1266,11 +1336,21 @@
                      closeGuideBtn.style.transform = 'translateY(0)';
                      closeGuideBtn.style.boxShadow = '0 4px 15px rgba(76, 175, 80, 0.3)';
                  });
-                 closeGuideBtn.addEventListener('click', () => overlay.remove());
+                 closeGuideBtn.addEventListener('click', () => {
+                     overlay.remove();
+                     document.removeEventListener('keydown', closeOnEscape);
+                 });
                  footer.appendChild(closeGuideBtn);
                  panel.appendChild(footer);
                  overlay.appendChild(panel);
                  document.body.appendChild(overlay);
+              const closeOnEscape = event => {
+                  if (event.key === 'Escape') {
+                      overlay.remove();
+                      document.removeEventListener('keydown', closeOnEscape);
+                  }
+              };
+              document.addEventListener('keydown', closeOnEscape);
              }, "h");
              
              console.log("Menu commands registered.");
